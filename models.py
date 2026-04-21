@@ -5,7 +5,6 @@ from sqlalchemy import ForeignKey, Integer, String, DateTime
 
 
 class Base(DeclarativeBase):
-    id: Mapped[int] = mapped_column(primary_key=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow)
 
@@ -14,6 +13,7 @@ db = SQLAlchemy(model_class=Base)
 
 
 class User(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -25,6 +25,7 @@ class User(db.Model):
 
 
 class Trip(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
 
     locations: Mapped[list["TripLocation"]] = relationship(
@@ -36,6 +37,7 @@ class Trip(db.Model):
 
 
 class TripLocation(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
     trip_id: Mapped[int] = mapped_column(ForeignKey("trip.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
