@@ -1,0 +1,7 @@
+flask
+sqlalchemy.orm
+flask_sqlalchemy
+sqlalchemy.orm
+flask_jwt_extended
+flask-bcrypt
+sqlalchemy
