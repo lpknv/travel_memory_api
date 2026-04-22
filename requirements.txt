@@ -5,3 +5,4 @@ sqlalchemy.orm
 flask_jwt_extended
 flask-bcrypt
 sqlalchemy
+flask_restx

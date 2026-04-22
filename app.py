@@ -1,21 +1,17 @@
+from datetime import timedelta
+
 from flask import Blueprint, Flask, g, jsonify, redirect, request, url_for
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt, get_jwt_identity, jwt_required
-
+from flask_restx import Api, Resource, fields
 from models import Trip, TripLocation, User, db
 
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = "mysql+pymysql://root:@localhost/travel_memory_api_db"
 app.config["JWT_SECRET_KEY"] = "super-secret"  # Change this!
-
-db.init_app(app)
-jwt = JWTManager(app)
-bcrypt = Bcrypt(app)
-
-BASE_URL = '/api'
-TRIPS_URL = BASE_URL + '/trips'
-TRIPS_CREATE_URL = TRIPS_URL + '/create'
-TRIPS_ID_URL = TRIPS_URL + '/<trip_id>'
+app.config["JWT_TOKEN_LOCATION"] = ["headers"]
+app.config["SWAGGER_UI_DOC_EXPANSION"] = "list"
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=8)
 
 
 @app.route('/')
@@ -27,11 +23,132 @@ def index():
     )
 
 
-# -------------------
-# AUTH
-# -------------------
-@app.route(BASE_URL + "/auth/login", methods=["POST"])
+db.init_app(app)
+jwt = JWTManager(app)
+bcrypt = Bcrypt(app)
+
+authorizations = {
+    "Bearer": {
+        "type":        "apiKey",
+        "in":          "header",
+        "name":        "Authorization",
+        "description": "JWT Authorization header. Example: Bearer <token>"
+    }
+}
+
+api = Api(
+    app,
+    doc="/swagger/docs/",
+    title="Travel Memory API",
+    version="1.0",
+    description="API",
+    doc_expansion="full",
+    authorizations=authorizations,
+    security="Bearer"
+)
+
+auth_ns = api.namespace("auth", path="/api/auth")
+users_ns = api.namespace("Users", path="/api/users")
+trips_ns = api.namespace("Trips", path="/api/trips")
+trip_locations_ns = api.namespace("Trip Locations", path="/api/trip-locations")
+
+login_model = api.model("Login", {
+    "email":    fields.String(required=True, example="test2@text.com"),
+    "password": fields.String(required=True, example="test2")
+})
+
+token_model = api.model("TokenResponse", {
+    "access_token": fields.String
+})
+
+user_model = api.model("User", {
+    "id":    fields.Integer,
+    "email": fields.String
+})
+
+location_model = api.model("Location", {
+    "id":       fields.Integer,
+    "name":     fields.String,
+    "position": fields.Integer
+})
+
+trip_model = api.model("Trip", {
+    "id":        fields.Integer,
+    "name":      fields.String,
+    "locations": fields.List(fields.Nested(location_model))
+})
+
+
+@auth_ns.route("/login")
+class Login(Resource):
+    @auth_ns.expect(login_model, validate=True)
+    @auth_ns.marshal_with(token_model, code=200)
+    def post(self):
+        data = request.get_json()
+
+        user = db.session.execute(
+            db.select(User).filter_by(email=data["email"])
+        ).scalar_one_or_none()
+
+        if not user or not bcrypt.check_password_hash(user.password_hash, data["password"]):
+            api.abort(401, "Invalid credentials")
+
+        access_token = create_access_token(identity=str(user.id))
+        return {"access_token": access_token}
+
+
+@users_ns.route("/me")
+class Me(Resource):
+    @api.doc(security="Bearer")
+    @users_ns.marshal_with(user_model)
+    @users_ns.doc(security="Bearer")
+    @jwt_required()
+    def get(self):
+        user_id = int(get_jwt_identity())
+        user = db.session.get(User, user_id)
+
+        if not user:
+            api.abort(404, "User not found")
+
+        return user
+
+
+@users_ns.route("/")
+class UserList(Resource):
+    trips_ns.marshal_list_with(user_model)
+
+    def get(self):
+        return [{"id": 1, "email": "test@mail.com"}]
+
+
+@trips_ns.route("/")
+class TripList(Resource):
+    @trips_ns.marshal_list_with(trip_model)
+    def get(self):
+        trips = Trip.query.all()
+        return trips
+
+
+@app.route("/api/users", methods=["GET"])
+def get_users():
+    """Return all users"""
+    users = [
+        {
+            "id":    user.id,
+            "email": user.email,
+        }
+        for user in User.query.all()
+    ]
+
+    return jsonify(users), 200
+
+
+@app.route("/api/auth/login", methods=["POST"])
 def login():
+    """
+    Login as a
+    user
+    with email and password"""
     data = request.get_json()
 
     if not data:
@@ -57,8 +174,9 @@ def login():
     }), 200
 
 
-@app.route(BASE_URL + "/auth/register", methods=["POST"])
+@app.route("/api/auth/register", methods=["POST"])
 def register():
+    """Register a new user"""
     data = request.get_json()
 
     if not data:
@@ -81,9 +199,10 @@ def register():
     return jsonify({"message": "Success!"}), 201
 
 
-@app.route(BASE_URL + "/me", methods=["GET"])
+@app.route("/api/me", methods=["GET"])
 @jwt_required()
 def get_me():
+    """Get user information"""
     user_id = int(get_jwt_identity())
     user = db.session.get(User, user_id)
 
@@ -96,8 +215,9 @@ def get_me():
     })
 
 
-@app.route(TRIPS_URL, methods=["GET"])
+@app.route("/api/trips", methods=["GET"])
 def get_trips():
+    """Return all trips"""
     trips = [
         {
             "id":        trip.id,
@@ -117,7 +237,7 @@ def get_trips():
     return jsonify(trips), 200
 
 
-@app.route(TRIPS_CREATE_URL, methods=["POST"])
+@app.route("/api/trips/create", methods=["POST"])
 def create_trip():
     """Create a new trip with locations"""
     data = request.get_json()
@@ -148,7 +268,7 @@ def create_trip():
     return jsonify({"message": "Trip created"}), 201
 
 
-@app.route("/trips/<int:trip_id>", methods=["PATCH"])
+@app.route("/api/trips/<trip_id>", methods=["PATCH"])
 def update_trip(trip_id):
     """Update a trip by id"""
     data = request.get_json() or {}
@@ -174,7 +294,7 @@ def update_trip(trip_id):
     }), 200
 
 
-@app.route(TRIPS_URL + "/<int:trip_id>/locations", methods=["POST"])
+@app.route("/api/trips/<int:trip_id>", methods=["POST"])
 def add_trip_location(trip_id):
     """Add a new location to a trip at the end"""
     data = request.get_json() or {}
@@ -216,7 +336,7 @@ def add_trip_location(trip_id):
     }), 201
 
 
-@app.route("/trips/locations/<int:trip_location_id>", methods=["PATCH"])
+@app.route("/api/trips/location/<int:trip_location_id>", methods=["PATCH"])
 def update_trip_location(trip_location_id):
     """Update a trip location by id"""
     data = request.get_json() or {}
@@ -244,7 +364,7 @@ def update_trip_location(trip_location_id):
     }), 200
 
 
-@app.route(TRIPS_URL + "/<int:trip_id>/locations/reorder", methods=["PATCH"])
+@app.route("/api/trips/<int:trip_id>/locations/reorder", methods=["PATCH"])
 def reorder_trip_locations(trip_id):
     "Reorder trip location positions"
     data = request.get_json() or {}
@@ -316,7 +436,7 @@ def reorder_trip_locations(trip_id):
     }), 200
 
 
-@app.route(TRIPS_ID_URL, methods=["GET"])
+@app.route("/api/trips/<trip_id>", methods=["GET"])
 @jwt_required()
 def get_trip(trip_id):
     """Get a single trip with locations"""
@@ -348,17 +468,17 @@ def get_trip(trip_id):
     }), 200
 
 
-@app.route(TRIPS_ID_URL, methods=["DELETE"])
+@app.route("/api/trips/<trip_id>", methods=["DELETE"])
 @jwt_required()
 def delete_trip(trip_id):
     """Delete a single trip"""
     pass
 
 
-@app.route(BASE_URL + "/timeline", methods=["GET"])
+@app.route("/api/me/timeline", methods=["GET"])
 @jwt_required()
 def timeline():
-    """Returns the timeline of all trips"""
+    """Returns the timeline of all trips of current logged-in user"""
     pass
 
 
