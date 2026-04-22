@@ -65,6 +65,15 @@ login_model = api.model("Login", {
     "password": fields.String(required=True, example="test2")
 })
 
+register_model = api.model("Register", {
+    "email":    fields.String(required=True, example="test2@text.com"),
+    "password": fields.String(required=True, example="test2")
+})
+
+message_model = api.model("MessageResponse", {
+    "message": fields.String(example="Success!")
+})
+
 token_model = api.model("TokenResponse", {
     "access_token": fields.String
 })
@@ -106,6 +115,45 @@ class Login(Resource):
         return {"access_token": access_token}
 
 
+@auth_ns.route("/register")
+class Register(Resource):
+    @auth_ns.expect(register_model, validate=True)
+    @auth_ns.response(400, "Invalid input")
+    @auth_ns.response(409, "Email already registered")
+    @auth_ns.marshal_with(message_model, code=201)
+    def post(self):
+        data = request.get_json()
+        return register_user(data)
+
+
+def register_user(data):
+    if not data:
+        api.abort(400, "No data provided")
+
+    email = data.get("email")
+    password = data.get("password")
+
+    if not email or not password:
+        api.abort(400, "Email and password are required")
+
+    existing_user = db.session.execute(
+        db.select(User).filter_by(email=email)
+    ).scalar_one_or_none()
+
+    if existing_user:
+        api.abort(409, "Email already registered")
+
+    user = User(
+        email=email,
+        password_hash=bcrypt.generate_password_hash(password).decode("utf-8"),
+    )
+
+    db.session.add(user)
+    db.session.commit()
+
+    return {"message": "Success!"}, 201
+
+
 @users_ns.route("/me")
 class Me(Resource):
     @users_ns.doc(security="Bearer")
@@ -123,10 +171,11 @@ class Me(Resource):
 
 @users_ns.route("/")
 class UserList(Resource):
-    trips_ns.marshal_list_with(user_model)
 
+    @users_ns.marshal_list_with(user_model)
     def get(self):
-        return [{"id": 1, "email": "test@mail.com"}]
+        users = User.query.all()
+        return users
 
 
 @trips_ns.route("/")
@@ -164,9 +213,7 @@ def get_users():
 @app.route("/api/auth/login", methods=["POST"])
 def login():
     """
-    Login as a
-    user
-    with email and password"""
+    Login as a user with email and password"""
     data = request.get_json()
 
     if not data:
@@ -194,27 +241,8 @@ def login():
 
 @app.route("/api/auth/register", methods=["POST"])
 def register():
-    """Register a new user"""
     data = request.get_json()
-
-    if not data:
-        return jsonify({"message": "No data provided"}), 400
-
-    email = data.get("email")
-    password = data.get("password")
-
-    if not email or not password:
-        return jsonify({"message": "Email and password are required"}), 400
-
-    user = User(
-        email=email,
-        password_hash=bcrypt.generate_password_hash(password).decode("utf-8"),
-    )
-
-    db.session.add(user)
-    db.session.commit()
-
-    return jsonify({"message": "Success!"}), 201
+    return register_user(data)
 
 
 @app.route("/api/me", methods=["GET"])
