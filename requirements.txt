@@ -7,3 +7,5 @@ flask-bcrypt
 sqlalchemy
 flask_restx
 python-dotenv
+gunicorn
+PyMySQL

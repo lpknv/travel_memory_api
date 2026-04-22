@@ -78,7 +78,7 @@ location_model = api.model("Location", {
     "id":       fields.Integer,
     "name":     fields.String,
     "position": fields.Integer,
-    "trip_id": fields.Integer,
+    "trip_id":  fields.Integer,
 })
 
 trip_model = api.model("Trip", {
