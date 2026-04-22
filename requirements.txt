@@ -9,3 +9,5 @@ flask_restx
 python-dotenv
 gunicorn
 PyMySQL
+flask-cors
+Faker

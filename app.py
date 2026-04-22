@@ -5,6 +5,7 @@ from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt, get_jwt_identity, jwt_required
 from flask_restx import Api, Resource, fields
 from models import Trip, TripLocation, User, db
+from flask_cors import CORS
 
 from dotenv import load_dotenv
 import os
@@ -12,6 +13,7 @@ import os
 load_dotenv()
 
 app = Flask(__name__)
+
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///app.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = os.getenv("SQLALCHEMY_TRACK_MODIFICATIONS", False)
 app.config["JWT_SECRET_KEY"] = os.getenv("SECRET_KEY", "fallback-dev-super-secret-key")
@@ -20,6 +22,8 @@ app.config["SWAGGER_UI_DOC_EXPANSION"] = "list"
 
 hours = int(os.getenv("JWT_EXPIRES_HOURS", 8))
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=hours)
+
+CORS(app, origins=["http://tm-api.test"])
 
 
 @app.route('/')
@@ -79,21 +83,24 @@ token_model = api.model("TokenResponse", {
 })
 
 user_model = api.model("User", {
-    "id":    fields.Integer,
-    "email": fields.String
+    "id":         fields.Integer,
+    "email":      fields.String,
+    "created_at": fields.DateTime
 })
 
 location_model = api.model("Location", {
-    "id":       fields.Integer,
-    "name":     fields.String,
-    "position": fields.Integer,
-    "trip_id":  fields.Integer,
+    "id":         fields.Integer,
+    "name":       fields.String,
+    "position":   fields.Integer,
+    "trip_id":    fields.Integer,
+    "created_at": fields.DateTime
 })
 
 trip_model = api.model("Trip", {
-    "id":        fields.Integer,
-    "name":      fields.String,
-    "locations": fields.List(fields.Nested(location_model))
+    "id":         fields.Integer,
+    "name":       fields.String,
+    "locations":  fields.List(fields.Nested(location_model)),
+    "created_at": fields.DateTime
 })
 
 
@@ -171,7 +178,6 @@ class Me(Resource):
 
 @users_ns.route("/")
 class UserList(Resource):
-
     @users_ns.marshal_list_with(user_model)
     def get(self):
         users = User.query.all()
@@ -183,8 +189,7 @@ class TripList(Resource):
     @trips_ns.marshal_list_with(trip_model)
     @jwt_required()
     def get(self):
-        trips = Trip.query.all()
-        return trips
+        return Trip.query.all()
 
 
 @trip_locations_ns.route("/")
@@ -266,13 +271,15 @@ def get_trips():
     """Return all trips"""
     trips = [
         {
-            "id":        trip.id,
-            "name":      trip.name,
-            "locations": [
+            "id":         trip.id,
+            "name":       trip.name,
+            "created_at": trip.created_at,
+            "locations":  [
                 {
-                    "id":       loc.id,
-                    "name":     loc.name,
-                    "position": loc.position
+                    "id":         loc.id,
+                    "name":       loc.name,
+                    "position":   loc.position,
+                    "created_at": loc.created_at,
                 }
                 for loc in trip.locations
             ]
@@ -314,12 +321,30 @@ def create_trip():
     return jsonify({"message": "Trip created"}), 201
 
 
-@app.route("/api/trips/<trip_id>", methods=["PATCH"])
+@app.route("/api/trips/<trip_id>", methods=["GET", "PATCH"])
 def update_trip(trip_id):
-    """Update a trip by id"""
-    data = request.get_json() or {}
+    """Update or get a trip by id"""
 
     trip = db.session.get(Trip, trip_id)
+
+    if request.method == "GET":
+        return jsonify({
+            "id":         trip.id,
+            "name":       trip.name,
+            "created_at": trip.created_at.isoformat() if trip.created_at else None,
+            "locations":  [
+                {
+                    "id":         loc.id,
+                    "name":       loc.name,
+                    "position":   loc.position,
+                    "created_at": loc.created_at.isoformat() if loc.created_at else None,
+                }
+                for loc in trip.locations
+            ]
+        }), 200
+
+    data = request.get_json() or {}
+
     if not trip:
         return jsonify({"message": "Trip not found"}), 404
 
@@ -515,10 +540,16 @@ def get_trip(trip_id):
 
 
 @app.route("/api/trips/<trip_id>", methods=["DELETE"])
-@jwt_required()
 def delete_trip(trip_id):
-    """Delete a single trip"""
-    pass
+    trip = db.session.get(Trip, trip_id)
+
+    if not trip:
+        return jsonify({"error": "Trip not found"}), 404
+
+    db.session.delete(trip)
+    db.session.commit()
+
+    return jsonify({"message": "Trip deleted"}), 200
 
 
 @app.route("/api/me/timeline", methods=["GET"])
@@ -532,5 +563,7 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
 
-    port = int(os.environ.get("PORT", 5001))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    port = int(os.environ.get("PORT", 5002))
+    host = os.environ.get("HOST", "127.0.0.1")
+    debug = bool(os.environ.get("DEBUG", True))
+    app.run(host=host, port=port, debug=debug)
