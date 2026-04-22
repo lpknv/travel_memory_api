@@ -6,12 +6,20 @@ from flask_jwt_extended import JWTManager, create_access_token, get_jwt, get_jwt
 from flask_restx import Api, Resource, fields
 from models import Trip, TripLocation, User, db
 
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = "mysql+pymysql://root:@localhost/travel_memory_api_db"
-app.config["JWT_SECRET_KEY"] = "super-secret"  # Change this!
+app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///app.db")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = os.getenv("SQLALCHEMY_TRACK_MODIFICATIONS", False)
+app.config["JWT_SECRET_KEY"] = os.getenv("SECRET_KEY", "fallback-dev-super-secret-key")
 app.config["JWT_TOKEN_LOCATION"] = ["headers"]
 app.config["SWAGGER_UI_DOC_EXPANSION"] = "list"
-app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=8)
+
+hours = int(os.getenv("JWT_EXPIRES_HOURS", 8))
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=hours)
 
 
 @app.route('/')
@@ -69,7 +77,8 @@ user_model = api.model("User", {
 location_model = api.model("Location", {
     "id":       fields.Integer,
     "name":     fields.String,
-    "position": fields.Integer
+    "position": fields.Integer,
+    "trip_id": fields.Integer,
 })
 
 trip_model = api.model("Trip", {
@@ -99,9 +108,8 @@ class Login(Resource):
 
 @users_ns.route("/me")
 class Me(Resource):
-    @api.doc(security="Bearer")
-    @users_ns.marshal_with(user_model)
     @users_ns.doc(security="Bearer")
+    @users_ns.marshal_with(user_model)
     @jwt_required()
     def get(self):
         user_id = int(get_jwt_identity())
@@ -124,9 +132,19 @@ class UserList(Resource):
 @trips_ns.route("/")
 class TripList(Resource):
     @trips_ns.marshal_list_with(trip_model)
+    @jwt_required()
     def get(self):
         trips = Trip.query.all()
         return trips
+
+
+@trip_locations_ns.route("/")
+class TripLocationResource(Resource):
+    @trips_ns.marshal_list_with(location_model)
+    @jwt_required()
+    def get(self):
+        locations = TripLocation.query.all()
+        return locations
 
 
 @app.route("/api/users", methods=["GET"])
