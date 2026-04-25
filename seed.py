@@ -15,7 +15,6 @@ with app.app_context():
         for i in range(num_locations):
             location = TripLocation(
                 name=fake.city(),
-                position=i,  # 👈 wichtig für Timeline!
                 trip_id=trip.id
             )
 

@@ -32,7 +32,7 @@ class Trip(db.Model):
         "TripLocation",
         back_populates="trip",
         cascade="all, delete-orphan",
-        order_by="TripLocation.position",
+        order_by="TripLocation.created_at",
     )
 
 
@@ -40,6 +40,4 @@ class TripLocation(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     trip_id: Mapped[int] = mapped_column(ForeignKey("trip.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    position: Mapped[int] = mapped_column(Integer, nullable=False)
-
     trip: Mapped["Trip"] = relationship("Trip", back_populates="locations")
