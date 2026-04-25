@@ -111,6 +111,16 @@ user_model = api.model(
     {"id": fields.Integer, "email": fields.String, "created_at": fields.DateTime},
 )
 
+photo_model = api.model(
+    "Photo",
+    {
+        "id": fields.Integer,
+        "name": fields.String,
+        "path": fields.String,
+        "created_at": fields.DateTime,
+    },
+)
+
 location_model = api.model(
     "Location",
     {
@@ -118,6 +128,7 @@ location_model = api.model(
         "name": fields.String,
         "trip_id": fields.Integer,
         "created_at": fields.DateTime,
+        "photos": fields.List(fields.Nested(photo_model)),
     },
 )
 
@@ -300,6 +311,15 @@ def get_trips():
                     "id": loc.id,
                     "name": loc.name,
                     "created_at": loc.created_at,
+                    "photos": [
+                        {
+                            "id": photo.id,
+                            "name": photo.name,
+                            "path": photo.path,
+                            "created_at": photo.created_at,
+                        }
+                        for photo in loc.photos
+                    ],
                 }
                 for loc in trip.locations
             ],
@@ -509,9 +529,15 @@ def timeline():
     pass
 
 
+PHOTOS_DIR = os.path.join(os.getcwd(), "photos")
+
+
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
+
+    if not os.path.exists(PHOTOS_DIR):
+        os.makedirs(PHOTOS_DIR)
 
     port = int(os.environ.get("PORT", 5002))
     host = os.environ.get("HOST", "127.0.0.1")
