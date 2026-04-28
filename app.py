@@ -591,4 +591,6 @@ if __name__ == "__main__":
     if not os.path.exists(PHOTOS_DIR):
         os.makedirs(PHOTOS_DIR)
 
-    app.run(host=HOST, port=PORT, debug=DEBUG)
+    from waitress import serve
+
+    serve(host=HOST, port=PORT, debug=DEBUG)

@@ -14,3 +14,4 @@ Faker
 flask_migrate
 psycopg2
 psycopg[binary]
+waitress
