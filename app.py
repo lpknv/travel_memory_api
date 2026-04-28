@@ -20,7 +20,6 @@ import os
 
 api = Blueprint("api", __name__)
 
-
 load_dotenv()
 
 app = Flask(__name__)
@@ -30,17 +29,22 @@ app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = os.getenv(
     "SQLALCHEMY_TRACK_MODIFICATIONS", False
 )
-app.config["JWT_SECRET_KEY"] = os.getenv("SECRET_KEY", "fallback-dev-super-secret-key")
+
+app.config["JWT_SECRET_KEY"] = os.getenv("SECRET_KEY")
 app.config["JWT_TOKEN_LOCATION"] = ["headers"]
 app.config["SWAGGER_UI_DOC_EXPANSION"] = "list"
+app.config["SWAGGER_UI_CONFIG"] = {"persistAuthorization": True}
+
 hours = int(os.getenv("JWT_EXPIRES_HOURS", 8))
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=hours)
 
-PUBLIC_PATHS = {
-    "/api/auth/login",
-    "/api/auth/register",
-    "/swagger/docs/",
-}
+PUBLIC_PATHS = {"/api/auth/login", "/api/auth/register", "/swagger/docs/"}
+
+PORT = int(os.getenv("PORT"))
+HOST = os.getenv("HOST")
+FLASK_ENV = os.getenv("FLASK_ENV")
+DEBUG = FLASK_ENV == "development"
+PHOTOS_DIR = os.path.join(os.getcwd(), "photos")
 
 
 @app.before_request
@@ -66,7 +70,7 @@ authorizations = {
         "type": "apiKey",
         "in": "header",
         "name": "Authorization",
-        "description": "JWT Authorization header. Example: 'Bearer your-token-goes-here'",
+        "description": "Enter: Bearer <access_token>",
     }
 }
 
@@ -76,12 +80,12 @@ api = Api(
     title="Travel Memory API",
     version="1.0",
     description="API",
-    doc_expansion="full",
     authorizations=authorizations,
     security="Bearer",
 )
 
-auth_ns = api.namespace("auth", path="/api/auth")
+auth_ns = api.namespace("Auth", path="/api/auth")
+profile_ns = api.namespace("Profile", path="/api/me")
 users_ns = api.namespace("Users", path="/api/users")
 trips_ns = api.namespace("Trips", path="/api/trips")
 trip_locations_ns = api.namespace("Trip Locations", path="/api/trip-locations")
@@ -108,7 +112,7 @@ token_model = api.model("Token", {"access_token": fields.String})
 
 user_model = api.model(
     "User",
-    {"id": fields.Integer, "email": fields.String, "created_at": fields.DateTime},
+    {"email": fields.String},
 )
 
 photo_model = api.model(
@@ -118,6 +122,14 @@ photo_model = api.model(
         "name": fields.String,
         "path": fields.String,
         "created_at": fields.DateTime,
+    },
+)
+
+create_photo_model = api.model(
+    "Photo",
+    {
+        "name": fields.String,
+        "path": fields.String,
     },
 )
 
@@ -132,6 +144,14 @@ location_model = api.model(
     },
 )
 
+create_location_model = api.model(
+    "CreateLocation",
+    {
+        "name": fields.String,
+        "photos": fields.List(fields.Nested(create_photo_model)),
+    },
+)
+
 trip_model = api.model(
     "Trip",
     {
@@ -139,6 +159,14 @@ trip_model = api.model(
         "name": fields.String,
         "locations": fields.List(fields.Nested(location_model)),
         "created_at": fields.DateTime,
+    },
+)
+
+create_trip_model = api.model(
+    "CreateTrip",
+    {
+        "name": fields.String,
+        "locations": fields.List(fields.Nested(create_location_model)),
     },
 )
 
@@ -202,10 +230,10 @@ def register_user(data):
     return {"message": "Success!"}, 201
 
 
-@users_ns.route("/me")
-class Me(Resource):
-    @users_ns.doc(security="Bearer")
-    @users_ns.marshal_with(user_model)
+@profile_ns.route("/")
+class MeResource(Resource):
+    @profile_ns.doc(security="Bearer")
+    @profile_ns.marshal_with(user_model)
     def get(self):
         user_id = int(get_jwt_identity())
         user = db.session.get(User, user_id)
@@ -217,7 +245,7 @@ class Me(Resource):
 
 
 @users_ns.route("/")
-class UserList(Resource):
+class UsersResource(Resource):
     @users_ns.marshal_list_with(user_model)
     def get(self):
         users = User.query.all()
@@ -225,24 +253,31 @@ class UserList(Resource):
 
 
 @trips_ns.route("/")
-class TripList(Resource):
+class TripsResource(Resource):
     @trips_ns.marshal_list_with(trip_model)
     def get(self):
-        return Trip.query.all()
+        return get_trips()
+
+
+@trips_ns.route("/create")
+class CreateTripResource(Resource):
+
+    @trips_ns.expect(create_trip_model, validate=True)
+    def post(self):
+        data = request.get_json()
+        return trip_create(data)
 
 
 @trip_locations_ns.route("/")
-class TripLocationResource(Resource):
+class TripLocationsResource(Resource):
     @trips_ns.marshal_list_with(location_model)
     def get(self):
-        locations = TripLocation.query.all()
-        return locations
+        return get_trip_locations()
 
 
 @app.route("/api/auth/login", methods=["POST"])
 def login():
-    """
-    Login as a user with email and password"""
+    """Login as a user with email and password"""
     data = request.get_json()
 
     if not data:
@@ -301,6 +336,7 @@ def get_users():
 @app.route("/api/trips", methods=["GET"])
 def get_trips():
     """Return all trips"""
+
     trips = [
         {
             "id": trip.id,
@@ -311,6 +347,7 @@ def get_trips():
                     "id": loc.id,
                     "name": loc.name,
                     "created_at": loc.created_at,
+                    "notes": loc.notes,
                     "photos": [
                         {
                             "id": photo.id,
@@ -330,10 +367,8 @@ def get_trips():
     return jsonify(trips), 200
 
 
-@app.route("/api/trips/create", methods=["POST"])
-def create_trip():
+def trip_create(data):
     """Create a new trip with locations"""
-    data = request.get_json()
 
     name = data.get("name")
     locations = data.get("locations")
@@ -348,13 +383,18 @@ def create_trip():
     db.session.add(trip)
     db.session.flush()
 
-    for index, loc_name in enumerate(locations):
+    for loc_name in locations:
         trip_location = TripLocation(trip_id=trip.id, name=loc_name)
         db.session.add(trip_location)
 
     db.session.commit()
 
     return jsonify({"message": "Trip created"}), 201
+
+
+@app.route("/api/trips/create", methods=["POST"])
+def create_trip():
+    return trip_create(request.get_json())
 
 
 @app.route("/api/trips/<trip_id>", methods=["GET", "PATCH"])
@@ -444,6 +484,21 @@ def add_trip_location(trip_id):
     )
 
 
+@app.route("/api/trip-locations", methods=["GET"])
+def get_trip_locations():
+    """Return all trip locations"""
+
+    locations = [
+        {
+            "name": trip.name,
+            "created_at": trip.created_at,
+        }
+        for trip in TripLocation.query.all()
+    ]
+
+    return jsonify(locations), 200
+
+
 @app.route("/api/trips/location/<int:trip_location_id>", methods=["PATCH"])
 def update_trip_location(trip_location_id):
     """Update a trip location by id"""
@@ -529,9 +584,6 @@ def timeline():
     pass
 
 
-PHOTOS_DIR = os.path.join(os.getcwd(), "photos")
-
-
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
@@ -539,7 +591,4 @@ if __name__ == "__main__":
     if not os.path.exists(PHOTOS_DIR):
         os.makedirs(PHOTOS_DIR)
 
-    port = int(os.environ.get("PORT", 5002))
-    host = os.environ.get("HOST")
-    debug = bool(os.environ.get("DEBUG"))
-    app.run(host=host, port=port, debug=debug)
+    app.run(host=HOST, port=PORT, debug=DEBUG)

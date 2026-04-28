@@ -48,6 +48,7 @@ class TripLocation(db.Model):
         cascade="all, delete-orphan",
         order_by="Photo.created_at",
     )
+    notes: Mapped[str] = mapped_column(String(255), nullable=True)
     trip: Mapped["Trip"] = relationship("Trip", back_populates="locations")
 
 
