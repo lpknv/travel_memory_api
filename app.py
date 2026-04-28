@@ -26,7 +26,7 @@ load_dotenv()
 app = Flask(__name__)
 app.register_blueprint(api, url_prefix="/api")
 
-app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///app.db")
+app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = os.getenv(
     "SQLALCHEMY_TRACK_MODIFICATIONS", False
 )
@@ -540,6 +540,6 @@ if __name__ == "__main__":
         os.makedirs(PHOTOS_DIR)
 
     port = int(os.environ.get("PORT", 5002))
-    host = os.environ.get("HOST", "127.0.0.1")
-    debug = bool(os.environ.get("DEBUG", True))
+    host = os.environ.get("HOST")
+    debug = bool(os.environ.get("DEBUG"))
     app.run(host=host, port=port, debug=debug)

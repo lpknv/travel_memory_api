@@ -12,3 +12,4 @@ PyMySQL
 flask-cors
 Faker
 flask_migrate
+psycopg[binary]
