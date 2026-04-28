@@ -593,4 +593,4 @@ if __name__ == "__main__":
 
     from waitress import serve
 
-    serve(app, host=HOST, port=PORT, debug=DEBUG)
+    serve(app, host=HOST, port=PORT)
