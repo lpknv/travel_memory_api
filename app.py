@@ -201,10 +201,16 @@ class TripsResource(Resource):
 
     @trips_ns.expect(pagination_parser)
     def get(self):
-        page = request.args.get("page", 1, type=int)
-        per_page = request.args.get("per_page", 10, type=int)
-
-        return paginate_query(Trip.query, trip_model, page, per_page)
+        args = pagination_parser.parse_args()
+        return (
+            paginate_query(
+                Trip.query,
+                trip_model,
+                args["page"],
+                args["per_page"],
+            ),
+            200,
+        )
 
     @trips_ns.expect(create_trip_model)
     def post(self):
