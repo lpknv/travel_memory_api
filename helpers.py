@@ -1,4 +1,4 @@
-from flask_restx import marshal
+from flask_restx import marshal, reqparse
 
 
 def paginate_query(query, model, page=1, per_page=10):
@@ -17,3 +17,8 @@ def paginate_query(query, model, page=1, per_page=10):
         "has_next": pagination.has_next,
         "has_prev": pagination.has_prev,
     }
+
+
+pagination_parser = reqparse.RequestParser()
+pagination_parser.add_argument("page", type=int, default=1, location="args")
+pagination_parser.add_argument("per_page", type=int, default=10, location="args")

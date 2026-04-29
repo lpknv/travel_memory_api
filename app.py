@@ -16,7 +16,7 @@ from flask_migrate import Migrate
 from flask_cors import CORS
 
 from models import Trip, TripLocation, Photo, User, db
-from helpers import paginate_query
+from helpers import paginate_query, pagination_parser
 
 
 load_dotenv()
@@ -52,7 +52,7 @@ api = Api(
             "type": "apiKey",
             "in": "header",
             "name": "Authorization",
-            "description": "Bearer <token>",
+            "description": "Bearer [token]",
         }
     },
     security="Bearer",
@@ -199,6 +199,7 @@ class UsersResource(Resource):
 class TripsResource(Resource):
     method_decorators = [jwt_required()]
 
+    @trips_ns.expect(pagination_parser)
     def get(self):
         page = request.args.get("page", 1, type=int)
         per_page = request.args.get("per_page", 10, type=int)
@@ -266,7 +267,6 @@ PORT = int(os.getenv("PORT", 5000))
 HOST = os.getenv("HOST", "0.0.0.0")
 FLASK_ENV = os.getenv("FLASK_ENV", "development")
 DEBUG = FLASK_ENV == "development"
-
 PHOTOS_DIR = os.path.join(os.getcwd(), "photos")
 
 if __name__ == "__main__":
