@@ -1,63 +1,38 @@
 from datetime import timedelta
+import os
+from dotenv import load_dotenv
 
-from flask import Blueprint, Flask, g, jsonify, redirect, request, url_for
-from flask_bcrypt import Bcrypt
+from flask import Flask, request
+from flask_restx import Api, Resource, fields
 from flask_jwt_extended import (
     JWTManager,
     create_access_token,
-    get_jwt,
     get_jwt_identity,
     jwt_required,
-    verify_jwt_in_request,
 )
-from flask_restx import Api, Resource, fields
-from models import Trip, TripLocation, User, db
-from flask_cors import CORS
+
+from flask_bcrypt import Bcrypt
 from flask_migrate import Migrate
-from dotenv import load_dotenv
-import os
+from flask_cors import CORS
 
+from models import Trip, TripLocation, Photo, User, db
+from helpers import paginate_query
 
-api = Blueprint("api", __name__)
 
 load_dotenv()
 
 app = Flask(__name__)
-app.register_blueprint(api, url_prefix="/api")
 
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = os.getenv(
-    "SQLALCHEMY_TRACK_MODIFICATIONS", False
-)
-
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["JWT_SECRET_KEY"] = os.getenv("SECRET_KEY")
 app.config["JWT_TOKEN_LOCATION"] = ["headers"]
 app.config["SWAGGER_UI_DOC_EXPANSION"] = "list"
 app.config["SWAGGER_UI_CONFIG"] = {"persistAuthorization": True}
 
-hours = int(os.getenv("JWT_EXPIRES_HOURS", 8))
-app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=hours)
-
-PUBLIC_PATHS = {"/api/auth/login", "/api/auth/register", "/swagger/docs/"}
-
-PORT = int(os.getenv("PORT"))
-HOST = os.getenv("HOST")
-FLASK_ENV = os.getenv("FLASK_ENV")
-DEBUG = FLASK_ENV == "development"
-PHOTOS_DIR = os.path.join(os.getcwd(), "photos")
-
-
-@app.before_request
-def protect_api_routes():
-    if (
-        request.method == "OPTIONS"
-        or not request.path.startswith("/api/")
-        or request.path in PUBLIC_PATHS
-    ):
-        return
-
-    verify_jwt_in_request()
-
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(
+    hours=int(os.getenv("JWT_EXPIRES_HOURS", 8))
+)
 
 CORS(app, origins=["http://tm-api.test"])
 migrate = Migrate(app, db)
@@ -65,14 +40,6 @@ db.init_app(app)
 jwt = JWTManager(app)
 bcrypt = Bcrypt(app)
 
-authorizations = {
-    "Bearer": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "Authorization",
-        "description": "Enter: Bearer <access_token>",
-    }
-}
 
 api = Api(
     app,
@@ -80,40 +47,46 @@ api = Api(
     title="Travel Memory API",
     version="1.0",
     description="API",
-    authorizations=authorizations,
+    authorizations={
+        "Bearer": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "Authorization",
+            "description": "Bearer <token>",
+        }
+    },
     security="Bearer",
+    ordered=True,
 )
 
 auth_ns = api.namespace("Auth", path="/api/auth")
 profile_ns = api.namespace("Profile", path="/api/me")
 users_ns = api.namespace("Users", path="/api/users")
 trips_ns = api.namespace("Trips", path="/api/trips")
-trip_locations_ns = api.namespace("Trip Locations", path="/api/trip-locations")
+trip_locations_ns = api.namespace("TripLocations", path="/api/trip-locations")
+
 
 login_model = api.model(
     "Login",
     {
-        "email": fields.String(required=True, example="test2@text.com"),
-        "password": fields.String(required=True, example="test2"),
+        "email": fields.String(required=True),
+        "password": fields.String(required=True),
     },
 )
 
 register_model = api.model(
     "Register",
     {
-        "email": fields.String(required=True, example="test2@text.com"),
-        "password": fields.String(required=True, example="test2"),
+        "email": fields.String(required=True),
+        "password": fields.String(required=True),
     },
 )
 
-message_model = api.model("Message", {"message": fields.String(example="Success!")})
-
 token_model = api.model("Token", {"access_token": fields.String})
 
-user_model = api.model(
-    "User",
-    {"email": fields.String},
-)
+message_model = api.model("Message", {"message": fields.String})
+
+user_model = api.model("User", {"email": fields.String})
 
 photo_model = api.model(
     "Photo",
@@ -122,14 +95,6 @@ photo_model = api.model(
         "name": fields.String,
         "path": fields.String,
         "created_at": fields.DateTime,
-    },
-)
-
-create_photo_model = api.model(
-    "Photo",
-    {
-        "name": fields.String,
-        "path": fields.String,
     },
 )
 
@@ -144,21 +109,13 @@ location_model = api.model(
     },
 )
 
-create_location_model = api.model(
-    "CreateLocation",
-    {
-        "name": fields.String,
-        "photos": fields.List(fields.Nested(create_photo_model)),
-    },
-)
-
 trip_model = api.model(
     "Trip",
     {
         "id": fields.Integer,
         "name": fields.String,
-        "locations": fields.List(fields.Nested(location_model)),
         "created_at": fields.DateTime,
+        "locations": fields.List(fields.Nested(location_model)),
     },
 )
 
@@ -166,431 +123,159 @@ create_trip_model = api.model(
     "CreateTrip",
     {
         "name": fields.String,
-        "locations": fields.List(fields.Nested(create_location_model)),
+        "locations": fields.List(fields.Raw),
     },
 )
 
+update_trip_model = api.model("UpdateTrip", {"name": fields.String})
+
 
 @auth_ns.route("/login")
-class Login(Resource):
-    @auth_ns.expect(login_model, validate=True)
-    @auth_ns.marshal_with(token_model, code=200)
+class LoginResource(Resource):
+    @auth_ns.expect(login_model)
+    @auth_ns.marshal_with(token_model)
     def post(self):
-        data = request.get_json()
+        data = request.get_json() or {}
 
         user = db.session.execute(
-            db.select(User).filter_by(email=data["email"])
+            db.select(User).filter_by(email=data.get("email"))
         ).scalar_one_or_none()
 
         if not user or not bcrypt.check_password_hash(
-            user.password_hash, data["password"]
+            user.password_hash, data.get("password", "")
         ):
             api.abort(401, "Invalid credentials")
 
-        access_token = create_access_token(identity=str(user.id))
-        return {"access_token": access_token}
+        return {"access_token": create_access_token(identity=str(user.id))}
 
 
 @auth_ns.route("/register")
-class Register(Resource):
-    @auth_ns.expect(register_model, validate=True)
-    @auth_ns.response(400, "Invalid input")
-    @auth_ns.response(409, "Email already registered")
-    @auth_ns.marshal_with(message_model, code=201)
+class RegisterResource(Resource):
+    @auth_ns.expect(register_model)
     def post(self):
-        data = request.get_json()
-        return register_user(data)
+        data = request.get_json() or {}
 
+        email = data.get("email")
+        password = data.get("password")
 
-def register_user(data):
-    if not data:
-        api.abort(400, "No data provided")
+        if not email or not password:
+            api.abort(400, "Invalid input")
 
-    email = data.get("email")
-    password = data.get("password")
+        if db.session.execute(
+            db.select(User).filter_by(email=email)
+        ).scalar_one_or_none():
+            api.abort(409, "User exists")
 
-    if not email or not password:
-        api.abort(400, "Email and password are required")
+        user = User(
+            email=email,
+            password_hash=bcrypt.generate_password_hash(password).decode(),
+        )
 
-    existing_user = db.session.execute(
-        db.select(User).filter_by(email=email)
-    ).scalar_one_or_none()
+        db.session.add(user)
+        db.session.commit()
 
-    if existing_user:
-        api.abort(409, "Email already registered")
-
-    user = User(
-        email=email,
-        password_hash=bcrypt.generate_password_hash(password).decode("utf-8"),
-    )
-
-    db.session.add(user)
-    db.session.commit()
-
-    return {"message": "Success!"}, 201
+        return {"message": "Success"}, 201
 
 
 @profile_ns.route("/")
 class MeResource(Resource):
-    @profile_ns.doc(security="Bearer")
+    method_decorators = [jwt_required()]
+
     @profile_ns.marshal_with(user_model)
     def get(self):
-        user_id = int(get_jwt_identity())
-        user = db.session.get(User, user_id)
-
+        user = db.session.get(User, int(get_jwt_identity()))
         if not user:
-            api.abort(404, "User not found")
-
+            api.abort(404)
         return user
 
 
 @users_ns.route("/")
 class UsersResource(Resource):
-    @users_ns.marshal_list_with(user_model)
     def get(self):
-        users = User.query.all()
-        return users
+        return User.query.all()
 
 
 @trips_ns.route("/")
 class TripsResource(Resource):
-    @trips_ns.marshal_list_with(trip_model)
+    method_decorators = [jwt_required()]
+
     def get(self):
-        return get_trips()
+        page = request.args.get("page", 1, type=int)
+        per_page = request.args.get("per_page", 10, type=int)
 
+        return paginate_query(Trip.query, trip_model, page, per_page)
 
-@trips_ns.route("/create")
-class CreateTripResource(Resource):
-
-    @trips_ns.expect(create_trip_model, validate=True)
+    @trips_ns.expect(create_trip_model)
     def post(self):
-        data = request.get_json()
-        return trip_create(data)
+        data = request.get_json() or {}
+
+        trip = Trip(name=data.get("name"))
+        db.session.add(trip)
+        db.session.flush()
+
+        for loc in data.get("locations", []):
+            tl = TripLocation(trip_id=trip.id, name=loc.get("name"))
+            db.session.add(tl)
+            db.session.flush()
+
+            for p in loc.get("photos", []):
+                db.session.add(
+                    Photo(
+                        trip_location_id=tl.id,
+                        name=p.get("name"),
+                        path=p.get("path"),
+                    )
+                )
+
+        db.session.commit()
+        return {"message": "Trip created"}, 201
+
+
+@trips_ns.route("/<int:trip_id>")
+class TripResource(Resource):
+    method_decorators = [jwt_required()]
+
+    @trips_ns.marshal_with(trip_model)
+    def get(self, trip_id):
+        trip = db.session.get(Trip, trip_id)
+        if not trip:
+            api.abort(404)
+        return trip
+
+    @trips_ns.expect(update_trip_model)
+    def patch(self, trip_id):
+        trip = db.session.get(Trip, trip_id)
+        if not trip:
+            api.abort(404)
+
+        trip.name = request.json.get("name", trip.name)
+        db.session.commit()
+
+        return {"message": "updated"}
 
 
 @trip_locations_ns.route("/")
 class TripLocationsResource(Resource):
-    @trips_ns.marshal_list_with(location_model)
+    method_decorators = [jwt_required()]
+
     def get(self):
-        return get_trip_locations()
+        return TripLocation.query.all()
 
 
-@app.route("/api/auth/login", methods=["POST"])
-def login():
-    """Login as a user with email and password"""
-    data = request.get_json()
+PORT = int(os.getenv("PORT", 5000))
+HOST = os.getenv("HOST", "0.0.0.0")
+FLASK_ENV = os.getenv("FLASK_ENV", "development")
+DEBUG = FLASK_ENV == "development"
 
-    if not data:
-        return jsonify({"message": "No data provided"}), 400
-
-    email = data.get("email")
-    password = data.get("password")
-
-    if not email or not password:
-        return jsonify({"message": "Email and password are required"}), 400
-
-    user = db.session.execute(
-        db.select(User).filter_by(email=email)
-    ).scalar_one_or_none()
-
-    if not user or not bcrypt.check_password_hash(user.password_hash, password):
-        return jsonify({"message": "Invalid credentials"}), 401
-
-    access_token = create_access_token(identity=str(user.id))
-
-    return jsonify({"access_token": access_token}), 200
-
-
-@app.route("/api/auth/register", methods=["POST"])
-def register():
-    data = request.get_json()
-    return register_user(data)
-
-
-@app.route("/api/me", methods=["GET"])
-def get_me():
-    """Get user information"""
-    user_id = int(get_jwt_identity())
-    user = db.session.get(User, user_id)
-
-    if not user:
-        return jsonify({"message": "User not found"}), 404
-
-    return jsonify({"id": user.id, "email": user.email})
-
-
-@app.route("/api/users", methods=["GET"])
-def get_users():
-    """Return all users"""
-    users = [
-        {
-            "id": user.id,
-            "email": user.email,
-        }
-        for user in User.query.all()
-    ]
-
-    return jsonify(users), 200
-
-
-@app.route("/api/trips", methods=["GET"])
-def get_trips():
-    """Return all trips"""
-
-    trips = [
-        {
-            "id": trip.id,
-            "name": trip.name,
-            "created_at": trip.created_at,
-            "locations": [
-                {
-                    "id": loc.id,
-                    "name": loc.name,
-                    "created_at": loc.created_at,
-                    "notes": loc.notes,
-                    "photos": [
-                        {
-                            "id": photo.id,
-                            "name": photo.name,
-                            "path": photo.path,
-                            "created_at": photo.created_at,
-                        }
-                        for photo in loc.photos
-                    ],
-                }
-                for loc in trip.locations
-            ],
-        }
-        for trip in Trip.query.all()
-    ]
-
-    return jsonify(trips), 200
-
-
-def trip_create(data):
-    """Create a new trip with locations"""
-
-    name = data.get("name")
-    locations = data.get("locations")
-
-    if not name or not locations:
-        return jsonify({"message": "Name and locations are required"}), 400
-
-    if len(locations) < 2:
-        return jsonify({"message": "At least 2 locations required"}), 400
-
-    trip = Trip(name=name)
-    db.session.add(trip)
-    db.session.flush()
-
-    for loc_name in locations:
-        trip_location = TripLocation(trip_id=trip.id, name=loc_name)
-        db.session.add(trip_location)
-
-    db.session.commit()
-
-    return jsonify({"message": "Trip created"}), 201
-
-
-@app.route("/api/trips/create", methods=["POST"])
-def create_trip():
-    return trip_create(request.get_json())
-
-
-@app.route("/api/trips/<trip_id>", methods=["GET", "PATCH"])
-def update_trip(trip_id):
-    """Update or get a trip by id"""
-
-    trip = db.session.get(Trip, trip_id)
-
-    if request.method == "GET":
-        return (
-            jsonify(
-                {
-                    "id": trip.id,
-                    "name": trip.name,
-                    "created_at": (
-                        trip.created_at.isoformat() if trip.created_at else None
-                    ),
-                    "locations": [
-                        {
-                            "id": loc.id,
-                            "name": loc.name,
-                            "created_at": (
-                                loc.created_at.isoformat() if loc.created_at else None
-                            ),
-                        }
-                        for loc in trip.locations
-                    ],
-                }
-            ),
-            200,
-        )
-
-    data = request.get_json() or {}
-
-    if not trip:
-        return jsonify({"message": "Trip not found"}), 404
-
-    if "name" in data:
-        name = data["name"]
-        if not isinstance(name, str) or not name.strip():
-            return jsonify({"message": "Name must be a non-empty string"}), 400
-        trip.name = name.strip()
-
-    db.session.commit()
-
-    return (
-        jsonify(
-            {"message": "Trip updated", "trip": {"id": trip.id, "name": trip.name}}
-        ),
-        200,
-    )
-
-
-@app.route("/api/trips/<int:trip_id>", methods=["POST"])
-def add_trip_location(trip_id):
-    """Add a new location to a trip at the end"""
-    data = request.get_json() or {}
-
-    trip = db.session.get(Trip, trip_id)
-    if not trip:
-        return jsonify({"message": "Trip not found"}), 404
-
-    name = data.get("name")
-    if not isinstance(name, str) or not name.strip():
-        return jsonify({"message": "Name must be a non-empty string"}), 400
-
-    location = TripLocation(
-        trip_id=trip_id,
-        name=name.strip(),
-    )
-
-    db.session.add(location)
-    db.session.commit()
-
-    return (
-        jsonify(
-            {
-                "message": "TripLocation created",
-                "location": {
-                    "id": location.id,
-                    "trip_id": location.trip_id,
-                    "name": location.name,
-                },
-            }
-        ),
-        201,
-    )
-
-
-@app.route("/api/trip-locations", methods=["GET"])
-def get_trip_locations():
-    """Return all trip locations"""
-
-    locations = [
-        {
-            "name": trip.name,
-            "created_at": trip.created_at,
-        }
-        for trip in TripLocation.query.all()
-    ]
-
-    return jsonify(locations), 200
-
-
-@app.route("/api/trips/location/<int:trip_location_id>", methods=["PATCH"])
-def update_trip_location(trip_location_id):
-    """Update a trip location by id"""
-    data = request.get_json() or {}
-
-    location = db.session.get(TripLocation, trip_location_id)
-    if not location:
-        return jsonify({"message": "TripLocation not found"}), 404
-
-    if "name" in data:
-        name = data["name"]
-        if not isinstance(name, str) or not name.strip():
-            return jsonify({"message": "Name must be a non-empty string"}), 400
-        location.name = name.strip()
-
-    db.session.commit()
-
-    return (
-        jsonify(
-            {
-                "message": "TripLocation updated",
-                "location": {
-                    "id": location.id,
-                    "trip_id": location.trip_id,
-                    "name": location.name,
-                },
-            }
-        ),
-        200,
-    )
-
-
-@app.route("/api/trips/<trip_id>", methods=["GET"])
-def get_trip(trip_id):
-    """Get a single trip with locations"""
-
-    trip = db.session.get(Trip, id=trip_id)
-    if not trip:
-        return jsonify({"message": "Trip not found"}), 404
-
-    locations = (
-        TripLocation.query.filter_by(trip_id=trip.id)
-        .order_by(TripLocation.created_at.asc())
-        .all()
-    )
-
-    return (
-        jsonify(
-            {
-                "trip": {
-                    "id": trip.id,
-                    "name": trip.name,
-                    "locations": [
-                        {
-                            "id": loc.id,
-                            "name": loc.name,
-                        }
-                        for loc in locations
-                    ],
-                }
-            }
-        ),
-        200,
-    )
-
-
-@app.route("/api/trips/<trip_id>", methods=["DELETE"])
-def delete_trip(trip_id):
-    trip = db.session.get(Trip, trip_id)
-
-    if not trip:
-        return jsonify({"error": "Trip not found"}), 404
-
-    db.session.delete(trip)
-    db.session.commit()
-
-    return jsonify({"message": "Trip deleted"}), 200
-
-
-@app.route("/api/me/timeline", methods=["GET"])
-def timeline():
-    """Returns the timeline of all trips of current logged-in user"""
-    pass
-
+PHOTOS_DIR = os.path.join(os.getcwd(), "photos")
 
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
 
-    if not os.path.exists(PHOTOS_DIR):
-        os.makedirs(PHOTOS_DIR)
+    if DEBUG:
+        app.run(host=HOST, port=PORT, debug=True)
+    else:
+        from waitress import serve
 
-    from waitress import serve
-
-    serve(app, host=HOST, port=PORT)
+        serve(app, host=HOST, port=PORT)
