@@ -19,4 +19,3 @@ jobs:
           api_key: ${{ secrets.RENDER_API_KEY }}
           github_deployment: true
           deployment_environment: 'production'
-          wait_deploy: true
