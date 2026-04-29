@@ -20,7 +20,6 @@ from flask_cors import CORS
 from models import Trip, TripLocation, Photo, User, db
 from helpers import paginate_query, pagination_parser
 
-
 load_dotenv()
 
 app = Flask(__name__)
@@ -260,7 +259,18 @@ class TripResource(Resource):
         trip.name = request.json.get("name", trip.name)
         db.session.commit()
 
-        return {"message": "updated"}
+        return {"message": "Trip updated!"}
+
+    @trips_ns.expect(api.model("DeleteTrip", {"id": fields.Integer}))
+    def delete(self, trip_id):
+        trip = db.session.get(Trip, trip_id)
+        if not trip:
+            api.abort(404)
+
+        db.session.delete(trip)
+        db.session.commit()
+
+        return {"message": "Trip deleted!"}
 
 
 @trip_locations_ns.route("/")
