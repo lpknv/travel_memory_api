@@ -129,6 +129,7 @@ create_trip_model = api.model(
 )
 
 update_trip_model = api.model("UpdateTrip", {"name": fields.String})
+delete_trip_model = api.model("DeleteTrip", {"id": fields.Integer})
 
 
 @auth_ns.route("/login")
@@ -252,6 +253,7 @@ class TripResource(Resource):
 
     @trips_ns.expect(update_trip_model)
     def patch(self, trip_id):
+        """Update a single trip"""
         trip = db.session.get(Trip, trip_id)
         if not trip:
             api.abort(404)
@@ -261,8 +263,9 @@ class TripResource(Resource):
 
         return {"message": "Trip updated!"}
 
-    @trips_ns.expect(api.model("DeleteTrip", {"id": fields.Integer}))
+    @trips_ns.expect(delete_trip_model)
     def delete(self, trip_id):
+        """Delete a single trip"""
         trip = db.session.get(Trip, trip_id)
         if not trip:
             api.abort(404)
@@ -277,8 +280,18 @@ class TripResource(Resource):
 class TripLocationsResource(Resource):
     method_decorators = [jwt_required()]
 
+    @trip_locations_ns.expect(pagination_parser)
     def get(self):
-        return TripLocation.query.all()
+        args = pagination_parser.parse_args()
+        return (
+            paginate_query(
+                TripLocation.query,
+                location_model,
+                args["page"],
+                args["per_page"],
+            ),
+            200,
+        )
 
 
 PORT = int(os.getenv("PORT", 5000))

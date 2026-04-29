@@ -1,12 +1,14 @@
 import datetime
+
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import ForeignKey, Integer, String, DateTime
 
 
 class Base(DeclarativeBase):
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.now
+        DateTime,
+        default=datetime.datetime.now,
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime,
@@ -24,39 +26,58 @@ class User(db.Model):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
     def to_dict(self):
-        return {"id": self.id, "email": self.email}
+        return {
+            "id": self.id,
+            "email": self.email,
+        }
 
 
 class Trip(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+
     locations: Mapped[list["TripLocation"]] = relationship(
         "TripLocation",
         back_populates="trip",
         cascade="all, delete-orphan",
         order_by="TripLocation.created_at",
+        passive_deletes=True,
     )
 
 
 class TripLocation(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
-    trip_id: Mapped[int] = mapped_column(ForeignKey("trip.id"), nullable=False)
+
+    trip_id: Mapped[int] = mapped_column(
+        ForeignKey("trip.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    trip: Mapped["Trip"] = relationship(
+        "Trip",
+        back_populates="locations",
+    )
+
     photos: Mapped[list["Photo"]] = relationship(
         "Photo",
         back_populates="trip_location",
         cascade="all, delete-orphan",
         order_by="Photo.created_at",
+        passive_deletes=True,
     )
-    notes: Mapped[str] = mapped_column(String(255), nullable=True)
-    trip: Mapped["Trip"] = relationship("Trip", back_populates="locations")
 
 
 class Photo(db.Model):
     id: Mapped[int] = mapped_column(primary_key=True)
+
     location_id: Mapped[int] = mapped_column(
-        ForeignKey("trip_location.id"), nullable=False
+        ForeignKey("trip_location.id", ondelete="CASCADE"),
+        nullable=False,
     )
+
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     path: Mapped[str] = mapped_column(String(255), nullable=False)
 
