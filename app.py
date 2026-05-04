@@ -70,8 +70,8 @@ trip_locations_ns = api.namespace("TripLocations", path="/api/trip-locations")
 login_model = api.model(
     "Login",
     {
-        "email": fields.String(required=True),
-        "password": fields.String(required=True),
+        "email": fields.String(required=True, default="test2@text.com"),
+        "password": fields.String(required=True, default="test2"),
     },
 )
 
@@ -99,6 +99,14 @@ photo_model = api.model(
     },
 )
 
+create_photo_model = api.model(
+    "CreatePhoto",
+    {
+        "name": fields.String,
+        "path": fields.String,
+    },
+)
+
 location_model = api.model(
     "Location",
     {
@@ -120,11 +128,21 @@ trip_model = api.model(
     },
 )
 
+create_location_model = api.model(
+    "CreateLocation",
+    {
+        "name": fields.String,
+        "trip_id": fields.Integer,
+        "created_at": fields.DateTime,
+        "photos": fields.List(fields.Nested(create_photo_model)),
+    },
+)
+
 create_trip_model = api.model(
     "CreateTrip",
     {
         "name": fields.String,
-        "locations": fields.List(fields.Raw),
+        "locations": fields.List(fields.Nested(create_location_model)),
     },
 )
 
@@ -189,12 +207,6 @@ class MeResource(Resource):
         if not user:
             api.abort(404)
         return user
-
-
-@users_ns.route("/")
-class UsersResource(Resource):
-    def get(self):
-        return User.query.all()
 
 
 @trips_ns.route("/")
